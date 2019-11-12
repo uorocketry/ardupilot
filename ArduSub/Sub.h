@@ -48,17 +48,11 @@
 #include <AP_NavEKF2/AP_NavEKF2.h>
 #include <AP_NavEKF3/AP_NavEKF3.h>
 #include <AP_Mission/AP_Mission.h>         // Mission command library
-#include <AC_PID/AC_P.h>               // P library
-#include <AC_PID/AC_PID.h>             // PID library
-#include <AC_PID/AC_PI_2D.h>           // PI library (2-axis)
-#include <AC_PID/AC_PID_2D.h>          // PID library (2-axis)
 #include <AC_AttitudeControl/AC_AttitudeControl_Sub.h> // Attitude control library
 #include <AC_AttitudeControl/AC_PosControl_Sub.h>      // Position control library
 #include <AP_Motors/AP_Motors.h>          // AP Motors library
-#include <AP_RangeFinder/AP_RangeFinder.h>     // Range finder library
 #include <Filter/Filter.h>             // Filter library
 #include <AP_Relay/AP_Relay.h>           // APM relay
-#include <AP_ServoRelayEvents/AP_ServoRelayEvents.h>
 #include <AP_Mount/AP_Mount.h>           // Camera/Antenna mount
 #include <AP_Vehicle/AP_Vehicle.h>         // needed for AHRS build
 #include <AP_InertialNav/AP_InertialNav.h>     // ArduPilot Mega inertial navigation library
@@ -70,8 +64,6 @@
 #include <AP_Scheduler/PerfInfo.h>       // loop perf monitoring
 #include <AP_Notify/AP_Notify.h>          // Notify library
 #include <AP_BattMonitor/AP_BattMonitor.h>     // Battery monitor library
-#include <AP_BoardConfig/AP_BoardConfig.h>     // board configuration library
-#include <AP_BoardConfig/AP_BoardConfig_CAN.h>
 #include <AP_Terrain/AP_Terrain.h>
 #include <AP_JSButton/AP_JSButton.h>   // Joystick/gamepad button function assignment
 #include <AP_LeakDetector/AP_LeakDetector.h> // Leak detector
@@ -128,7 +120,7 @@
 #include <SITL/SITL.h>
 #endif
 
-class Sub : public AP_HAL::HAL::Callbacks {
+class Sub : public AP_Vehicle {
 public:
     friend class GCS_MAVLINK_Sub;
     friend class GCS_Sub;
@@ -156,9 +148,6 @@ private:
     // main loop scheduler
     AP_Scheduler scheduler{FUNCTOR_BIND_MEMBER(&Sub::fast_loop, void)};
 
-    // AP_Notify instance
-    AP_Notify notify;
-
     // primary input control channels
     RC_Channel *channel_roll;
     RC_Channel *channel_pitch;
@@ -169,16 +158,10 @@ private:
 
     AP_Logger logger;
 
-    AP_GPS gps;
-
     AP_LeakDetector leak_detector;
 
     TSYS01 celsius;
-    AP_Baro barometer;
-    Compass compass;
-    AP_InertialSensor ins;
 
-    RangeFinder rangefinder;
     struct {
         bool enabled:1;
         bool alt_healthy:1; // true if we can trust the altitude from the rangefinder
@@ -214,8 +197,6 @@ private:
     // system time in milliseconds of last recorded yaw reset from ekf
     uint32_t ekfYawReset_ms = 0;
 
-    AP_SerialManager serial_manager;
-
     // GCS selection
     GCS_Sub _gcs; // avoid using this; use gcs()
     GCS_Sub &gcs() { return _gcs; }
@@ -245,21 +226,13 @@ private:
     // This is the state of the flight control system
     // There are multiple states defined such as STABILIZE, ACRO,
     control_mode_t control_mode;
-    mode_reason_t control_mode_reason = MODE_REASON_UNKNOWN;
+    ModeReason control_mode_reason = ModeReason::UNKNOWN;
 
     control_mode_t prev_control_mode;
-    mode_reason_t prev_control_mode_reason = MODE_REASON_UNKNOWN;
+    ModeReason prev_control_mode_reason = ModeReason::UNKNOWN;
 
 #if RCMAP_ENABLED == ENABLED
     RCMapper rcmap;
-#endif
-
-    // board specific config
-    AP_BoardConfig BoardConfig;
-
-#if HAL_WITH_UAVCAN
-    // board specific config for CAN bus
-    AP_BoardConfig_CAN BoardConfig_CAN;
 #endif
 
     // Failsafe
@@ -398,12 +371,6 @@ private:
     AC_Loiter loiter_nav;
     AC_Circle circle_nav;
 
-    // Reference to the relay object
-    AP_Relay relay;
-
-    // handle repeated servo and relay events
-    AP_ServoRelayEvents ServoRelayEvents;
-
     // Camera
 #if CAMERA == ENABLED
     AP_Camera camera{MASK_LOG_CAMERA, current_loc};
@@ -411,8 +378,7 @@ private:
 
     // Camera/Antenna mount tracking and stabilisation stuff
 #if MOUNT == ENABLED
-    // current_loc uses the baro/gps soloution for altitude rather than gps only.
-    AP_Mount camera_mount{current_loc};
+    AP_Mount camera_mount;
 #endif
 
     // AC_Fence library to reduce fly-aways
@@ -483,12 +449,11 @@ private:
     void Log_Write_Performance();
     void Log_Write_Attitude();
     void Log_Write_MotBatt();
-    void Log_Write_Event(Log_Event id);
-    void Log_Write_Data(uint8_t id, int32_t value);
-    void Log_Write_Data(uint8_t id, uint32_t value);
-    void Log_Write_Data(uint8_t id, int16_t value);
-    void Log_Write_Data(uint8_t id, uint16_t value);
-    void Log_Write_Data(uint8_t id, float value);
+    void Log_Write_Data(LogDataID id, int32_t value);
+    void Log_Write_Data(LogDataID id, uint32_t value);
+    void Log_Write_Data(LogDataID id, int16_t value);
+    void Log_Write_Data(LogDataID id, uint16_t value);
+    void Log_Write_Data(LogDataID id, float value);
     void Log_Sensor_Health();
     void Log_Write_GuidedTarget(uint8_t target_type, const Vector3f& pos_target, const Vector3f& vel_target);
     void Log_Write_Vehicle_Startup_Messages();
@@ -578,7 +543,8 @@ private:
     void mainloop_failsafe_enable();
     void mainloop_failsafe_disable();
     void fence_check();
-    bool set_mode(control_mode_t mode, mode_reason_t reason);
+    bool set_mode(control_mode_t mode, ModeReason reason);
+    bool set_mode(const uint8_t mode, const ModeReason reason) override;
     void update_flight_mode();
     void exit_mode(control_mode_t old_control_mode, control_mode_t new_control_mode);
     bool mode_requires_GPS(control_mode_t mode);

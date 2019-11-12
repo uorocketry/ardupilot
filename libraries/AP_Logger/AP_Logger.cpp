@@ -15,8 +15,12 @@ AP_Logger *AP_Logger::_singleton;
 extern const AP_HAL::HAL& hal;
 
 #ifndef HAL_LOGGING_FILE_BUFSIZE
+#if HAL_MEM_CLASS >= HAL_MEM_CLASS_300
+#define HAL_LOGGING_FILE_BUFSIZE  50
+#else
 #define HAL_LOGGING_FILE_BUFSIZE  16
-#endif 
+#endif
+#endif
 
 #ifndef HAL_LOGGING_MAV_BUFSIZE
 #define HAL_LOGGING_MAV_BUFSIZE  8
@@ -701,7 +705,7 @@ void AP_Logger::Write_Message(const char *message)
     FOR_EACH_BACKEND(Write_Message(message));
 }
 
-void AP_Logger::Write_Mode(uint8_t mode, uint8_t reason)
+void AP_Logger::Write_Mode(uint8_t mode, const ModeReason reason)
 {
     FOR_EACH_BACKEND(Write_Mode(mode, reason));
 }
@@ -1134,12 +1138,12 @@ bool AP_Logger::Write_ISBD(const uint16_t isb_seqno,
 }
 
 // Wrote an event packet
-void AP_Logger::Write_Event(Log_Event id)
+void AP_Logger::Write_Event(LogEvent id)
 {
     const struct log_Event pkt{
         LOG_PACKET_HEADER_INIT(LOG_EVENT_MSG),
         time_us  : AP_HAL::micros64(),
-        id       : id
+        id       : (uint8_t)id
     };
     WriteCriticalBlock(&pkt, sizeof(pkt));
 }

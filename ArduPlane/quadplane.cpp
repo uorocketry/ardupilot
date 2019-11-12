@@ -380,7 +380,7 @@ const AP_Param::GroupInfo QuadPlane::var_info2[] = {
 
 #if QAUTOTUNE_ENABLED
     // @Group: AUTOTUNE_
-    // @Path: qautotune.cpp
+    // @Path: ../libraries/AC_AutoTune/AC_AutoTune.cpp
     AP_SUBGROUPINFO(qautotune, "AUTOTUNE_",  6, QuadPlane, QAutoTune),
 #endif
 
@@ -461,6 +461,15 @@ const AP_Param::GroupInfo QuadPlane::var_info2[] = {
     // @User: Advanced
     AP_GROUPINFO("TKOFF_ARSP_LIM", 15, QuadPlane, maximum_takeoff_airspeed, 0),
 
+    // @Param: ASSIST_ALT
+    // @DisplayName: Quadplane assistance altitude
+    // @Description: This is the altitude below which quadplane assistance will be triggered. This acts the same way as Q_ASSIST_ANGLE and Q_ASSIST_SPEED, but triggers if the aircraft drops below the given altitude while the VTOL motors are not running. A value of zero disables this feature. The altutude is calculated as being above ground level. The height above ground is given from a Lidar used if available and RNGFND_LANDING=1. Otherwise it comes from terrain data if TERRAIN_FOLLOW=1 and comes from height above home otherwise.
+    // @Units: m
+    // @Range: 0 120
+    // @Increment: 1
+    // @User: Standard
+    AP_GROUPINFO("ASSIST_ALT", 16, QuadPlane, assist_alt, 0),
+
     AP_GROUPEND
 };
 
@@ -475,7 +484,6 @@ static const struct AP_Param::defaults_table_struct defaults_table[] = {
     { "Q_A_RAT_PIT_I",    0.25 },
     { "Q_A_RAT_PIT_FLTD", 10.0 },
     { "Q_M_SPOOL_TIME",   0.25 },
-    { "Q_M_HOVER_LEARN",     0 },
     { "Q_LOIT_ANG_MAX",   15.0 },
     { "Q_LOIT_ACC_MAX",   250.0 },
     { "Q_LOIT_BRK_ACCEL", 50.0 },
@@ -708,7 +716,7 @@ bool QuadPlane::setup(void)
     pos_control->set_dt(loop_delta_t);
     attitude_control->parameter_sanity_check();
 
-    // setup the trim of any motors used by AP_Motors so px4io
+    // setup the trim of any motors used by AP_Motors so I/O board
     // failsafe will disable motors
     for (uint8_t i=0; i<8; i++) {
         SRV_Channel::Aux_servo_function_t func = SRV_Channels::get_motor_function(i);
@@ -983,12 +991,16 @@ float QuadPlane::get_pilot_throttle()
     // normalize to [0,1]
     throttle_in /= plane.channel_throttle->get_range();
 
-    // get hover throttle level [0,1]
-    float thr_mid = motors->get_throttle_hover();
-    float thrust_curve_expo = constrain_float(throttle_expo, 0.0f, 1.0f);
+    if (is_positive(throttle_expo)) {
+        // get hover throttle level [0,1]
+        float thr_mid = motors->get_throttle_hover();
+        float thrust_curve_expo = constrain_float(throttle_expo, 0.0f, 1.0f);
 
-    // this puts mid stick at hover throttle
-    return throttle_curve(thr_mid, thrust_curve_expo, throttle_in);;
+        // this puts mid stick at hover throttle
+        return throttle_curve(thr_mid, thrust_curve_expo, throttle_in);;
+    } else {
+        return throttle_in;
+    }
 }
 
 /*
@@ -1374,11 +1386,37 @@ bool QuadPlane::assistance_needed(float aspeed)
         angle_error_start_ms = 0;
         return false;
     }
+
     if (aspeed < assist_speed) {
         // assistance due to Q_ASSIST_SPEED
         in_angle_assist = false;
         angle_error_start_ms = 0;
         return true;
+    }
+
+    const uint32_t now = AP_HAL::millis();
+
+    /*
+      optional assistance when altitude is too close to the ground
+     */
+    if (assist_alt > 0) {
+        float height_above_ground = plane.relative_ground_altitude(plane.g.rangefinder_landing);
+        if (height_above_ground < assist_alt) {
+            if (alt_error_start_ms == 0) {
+                alt_error_start_ms = now;
+            }
+            if (now - alt_error_start_ms > 500) {
+                // we've been below assistant alt for 0.5s
+                if (!in_alt_assist) {
+                    in_alt_assist = true;
+                    gcs().send_text(MAV_SEVERITY_INFO, "Alt assist %.1fm", height_above_ground);
+                }
+                return true;
+            }
+        } else {
+            in_alt_assist = false;
+            alt_error_start_ms = 0;
+        }
     }
 
     if (assist_angle <= 0) {
@@ -1409,7 +1447,7 @@ bool QuadPlane::assistance_needed(float aspeed)
         in_angle_assist = false;
         return false;
     }
-    const uint32_t now = AP_HAL::millis();
+
     if (angle_error_start_ms == 0) {
         angle_error_start_ms = now;
     }
@@ -1453,7 +1491,7 @@ void QuadPlane::update_transition(void)
         (transition_failure > 0) &&
         ((now - transition_start_ms) > ((uint32_t)transition_failure * 1000))) {
         gcs().send_text(MAV_SEVERITY_CRITICAL, "Transition failed, exceeded time limit");
-        plane.set_mode(plane.mode_qland, MODE_REASON_VTOL_FAILED_TRANSITION);
+        plane.set_mode(plane.mode_qland, ModeReason::VTOL_FAILED_TRANSITION);
     }
 
     float aspeed;
@@ -1564,7 +1602,7 @@ void QuadPlane::update_transition(void)
         plane.rollController.reset_I();
 
         // give full authority to attitude control
-        attitude_control->set_throttle_mix_max();
+        attitude_control->set_throttle_mix_max(1.0f);
         break;
     }
         
@@ -1825,12 +1863,20 @@ void QuadPlane::update_throttle_hover()
         return;
     }
 
+    // don't update if Z controller not running
+    const uint32_t now = AP_HAL::millis();
+    if (now - last_pidz_active_ms > 20) {
+        return;
+    }
+
     // get throttle output
     float throttle = motors->get_throttle();
 
-    // calc average throttle if we are in a level hover
+    float aspeed;
+    // calc average throttle if we are in a level hover and low airspeed
     if (throttle > 0.0f && fabsf(inertial_nav.get_velocity_z()) < 60 &&
-            labs(ahrs_view->roll_sensor) < 500 && labs(ahrs_view->pitch_sensor) < 500) {
+        labs(ahrs_view->roll_sensor) < 500 && labs(ahrs_view->pitch_sensor) < 500 &&
+        ahrs.airspeed_estimate(&aspeed) && aspeed < plane.aparm.airspeed_min*0.3) {
         // Can we set the time constant automatically
         motors->update_throttle_hover(0.01f);
     }
@@ -1874,9 +1920,18 @@ void QuadPlane::motors_output(bool run_rate_controller)
     
     motors->output();
     if (motors->armed() && motors->get_spool_state() != AP_Motors::SpoolState::SHUT_DOWN) {
-        plane.logger.Write_Rate(ahrs_view, *motors, *attitude_control, *pos_control);
-        Log_Write_QControl_Tuning();
         const uint32_t now = AP_HAL::millis();
+
+        // log RATE at main loop rate
+        plane.logger.Write_Rate(ahrs_view, *motors, *attitude_control, *pos_control);
+
+        // log QTUN at 25 Hz
+        if (now - last_qtun_log_ms > 40) {
+            last_qtun_log_ms = now;
+            Log_Write_QControl_Tuning();
+        }
+
+        // log CTRL at 10 Hz
         if (now - last_ctrl_log_ms > 100) {
             last_ctrl_log_ms = now;
             attitude_control->control_monitor_log();
@@ -2376,7 +2431,7 @@ void QuadPlane::waypoint_controller(void)
 /*
   handle auto-mode when auto_state.vtol_mode is true
  */
-void QuadPlane::control_auto(const Location &loc)
+void QuadPlane::control_auto(void)
 {
     if (!setup()) {
         return;
@@ -2556,13 +2611,13 @@ bool QuadPlane::verify_vtol_takeoff(const AP_Mission::Mission_Command &cmd)
     // check for failure conditions
     if (is_positive(takeoff_failure_scalar) && ((now - takeoff_start_time_ms) > takeoff_time_limit_ms)) {
         gcs().send_text(MAV_SEVERITY_CRITICAL, "Failed to complete takeoff within time limit");
-        plane.set_mode(plane.mode_qland, MODE_REASON_VTOL_FAILED_TAKEOFF);
+        plane.set_mode(plane.mode_qland, ModeReason::VTOL_FAILED_TAKEOFF);
         return false;
     }
 
     if (is_positive(maximum_takeoff_airspeed) && (plane.airspeed.get_airspeed() > maximum_takeoff_airspeed)) {
         gcs().send_text(MAV_SEVERITY_CRITICAL, "Failed to complete takeoff, excessive wind");
-        plane.set_mode(plane.mode_qland, MODE_REASON_VTOL_FAILED_TAKEOFF);
+        plane.set_mode(plane.mode_qland, ModeReason::VTOL_FAILED_TAKEOFF);
         return false;
     }
 
@@ -3079,7 +3134,7 @@ void QuadPlane::update_throttle_thr_mix(void)
         bool descent_not_demanded = pos_control->get_desired_velocity().z >= 0.0f;
 
         if ( large_angle_request || large_angle_error || accel_moving || descent_not_demanded) {
-            attitude_control->set_throttle_mix_max();
+            attitude_control->set_throttle_mix_max(1.0);
         } else {
             attitude_control->set_throttle_mix_min();
         }

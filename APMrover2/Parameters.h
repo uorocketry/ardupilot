@@ -4,6 +4,7 @@
 
 #include "RC_Channel.h"
 #include "AC_Sprayer/AC_Sprayer.h"
+#include "AP_Gripper/AP_Gripper.h"
 #include "AP_Rally.h"
 
 // Global parameter class.
@@ -394,6 +395,9 @@ public:
 
     // gain for speed of correction in loiter
     AP_Float loiter_speed_gain;
+
+    // FS options
+    AP_Int32 fs_options;
 };
 
 extern const AP_Param::Info var_info[];

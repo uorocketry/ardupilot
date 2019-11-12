@@ -29,10 +29,8 @@
 
 class AP_ADSB {
 public:
-    AP_ADSB()
-    {
-        AP_Param::setup_object_defaults(this, var_info);
-    }
+    // constructor
+    AP_ADSB();
 
     /* Do not allow copies */
     AP_ADSB(const AP_ADSB &other) = delete;
@@ -75,6 +73,9 @@ public:
     }
     bool next_sample(adsb_vehicle_t &obstacle);
 
+    // handle a adsb_vehicle_t from an external source (used for UAVCAN)
+    void handle_adsb_vehicle(const adsb_vehicle_t &vehicle);
+
     // mavlink message handler
     void handle_message(const mavlink_channel_t chan, const mavlink_message_t &msg);
 
@@ -85,8 +86,17 @@ public:
     void set_special_ICAO_target(const uint32_t new_icao_target) { _special_ICAO_target = (int32_t)new_icao_target; };
     bool is_special_vehicle(uint32_t icao) const { return _special_ICAO_target != 0 && (_special_ICAO_target == (int32_t)icao); }
 
+    // confirm a value is a valid callsign
+    static bool is_valid_callsign(uint16_t octal) WARN_IF_UNUSED;
+
+    // get singleton instance
+    static AP_ADSB *get_singleton(void) {
+        return _singleton;
+    }
 
 private:
+    static AP_ADSB *_singleton;
+
     // initialize _vehicle_list
     void init();
 
@@ -190,7 +200,7 @@ private:
     static const uint8_t max_samples = 30;
     ObjectBuffer<adsb_vehicle_t> samples{max_samples};
 
-    void push_sample(adsb_vehicle_t &vehicle);
+    void push_sample(const adsb_vehicle_t &vehicle);
 
     // logging
     AP_Int8 _log;
@@ -200,4 +210,10 @@ private:
         SPECIAL_ONLY    = 1,
         ALL             = 2
     };
+
+
+};
+
+namespace AP {
+    AP_ADSB *ADSB();
 };

@@ -1,5 +1,9 @@
 #include "Copter.h"
 
+#if HAL_WITH_UAVCAN
+ #include <AP_ToshibaCAN/AP_ToshibaCAN.h>
+#endif
+
 // performs pre-arm checks. expects to be called at 1hz.
 void AP_Arming_Copter::update(void)
 {
@@ -35,7 +39,7 @@ bool AP_Arming_Copter::run_pre_arm_checks(bool display_failure)
     // at the same time.  This cannot be allowed.
     if (rc().find_channel_for_option(RC_Channel::AUX_FUNC::MOTOR_INTERLOCK) &&
         rc().find_channel_for_option(RC_Channel::AUX_FUNC::MOTOR_ESTOP)){
-        check_failed(ARMING_CHECK_NONE, display_failure, "Interlock/E-Stop Conflict");
+        check_failed(display_failure, "Interlock/E-Stop Conflict");
         return false;
     }
 
@@ -44,11 +48,11 @@ bool AP_Arming_Copter::run_pre_arm_checks(bool display_failure)
     // otherwise exit immediately.  This check to be repeated,
     // as state can change at any time.
     if (copter.ap.using_interlock && copter.ap.motor_interlock_switch) {
-        check_failed(ARMING_CHECK_NONE, display_failure, "Motor Interlock Enabled");
+        check_failed(display_failure, "Motor Interlock Enabled");
     }
 
     // succeed if pre arm checks are disabled
-    if (checks_to_perform == ARMING_CHECK_NONE) {
+    if (checks_to_perform == 0) {
         return true;
     }
 
@@ -172,6 +176,12 @@ bool AP_Arming_Copter::parameter_checks(bool display_failure)
         }
 #endif
 
+        // pilot-speed-up parameter check
+        if (copter.g.pilot_speed_up <= 0) {
+            check_failed(ARMING_CHECK_PARAMETERS, display_failure, "Check PILOT_SPEED_UP");
+            return false;
+        }
+
         #if FRAME_CONFIG == HELI_FRAME
         if (copter.g2.frame_class.get() != AP_Motors::MOTOR_FRAME_HELI_QUAD &&
             copter.g2.frame_class.get() != AP_Motors::MOTOR_FRAME_HELI_DUAL &&
@@ -239,26 +249,49 @@ bool AP_Arming_Copter::motor_checks(bool display_failure)
 {
     // check motors initialised  correctly
     if (!copter.motors->initialised_ok()) {
-        check_failed(ARMING_CHECK_NONE, display_failure, "check firmware or FRAME_CLASS");
+        check_failed(display_failure, "check firmware or FRAME_CLASS");
         return false;
     }
 
     // if this is a multicopter using ToshibaCAN ESCs ensure MOT_PMW_MIN = 1000, MOT_PWM_MAX = 2000
 #if HAL_WITH_UAVCAN && (FRAME_CONFIG != HELI_FRAME)
     bool tcan_active = false;
+    uint8_t tcan_index = 0;
     const uint8_t num_drivers = AP::can().get_num_drivers();
     for (uint8_t i = 0; i < num_drivers; i++) {
         if (AP::can().get_protocol_type(i) == AP_BoardConfig_CAN::Protocol_Type_ToshibaCAN) {
             tcan_active = true;
+            tcan_index = i;
         }
     }
     if (tcan_active) {
         if (copter.motors->get_pwm_output_min() != 1000) {
-            check_failed(ARMING_CHECK_NONE, display_failure, "TCAN ESCs require MOT_PWM_MIN=1000");
+            check_failed(display_failure, "TCAN ESCs require MOT_PWM_MIN=1000");
             return false;
         }
         if (copter.motors->get_pwm_output_max() != 2000) {
-            check_failed(ARMING_CHECK_NONE, display_failure, "TCAN ESCs require MOT_PWM_MAX=2000");
+            check_failed(display_failure, "TCAN ESCs require MOT_PWM_MAX=2000");
+            return false;
+        }
+
+        // check we have an ESC present for every SERVOx_FUNCTION = motorx
+        // find and report first missing ESC, extra ESCs are OK
+        AP_ToshibaCAN *tcan = AP_ToshibaCAN::get_tcan(tcan_index);
+        const uint16_t motors_mask = copter.motors->get_motor_mask();
+        const uint16_t esc_mask = tcan->get_present_mask();
+        uint8_t escs_missing = 0;
+        uint8_t first_missing = 0;
+        for (uint8_t i = 0; i < 16; i++) {
+            uint32_t bit = 1UL << i;
+            if (((motors_mask & bit) > 0) && ((esc_mask & bit) == 0)) {
+                escs_missing++;
+                if (first_missing == 0) {
+                    first_missing = i+1;
+                }
+            }
+        }
+        if (escs_missing > 0) {
+            check_failed(display_failure, "TCAN missing %d escs, check #%d", (int)escs_missing, (int)first_missing);
             return false;
         }
     }
@@ -295,9 +328,9 @@ bool AP_Arming_Copter::oa_checks(bool display_failure)
     }
     // display failure
     if (strlen(failure_msg) == 0) {
-        check_failed(ARMING_CHECK_NONE, display_failure, "%s", "Check Object Avoidance");
+        check_failed(display_failure, "%s", "Check Object Avoidance");
     } else {
-        check_failed(ARMING_CHECK_NONE, display_failure, "%s", failure_msg);
+        check_failed(display_failure, "%s", failure_msg);
     }
     return false;
 #else
@@ -333,7 +366,7 @@ bool AP_Arming_Copter::gps_checks(bool display_failure)
         if (reason == nullptr) {
             reason = "AHRS not healthy";
         }
-        check_failed(ARMING_CHECK_NONE, display_failure, "%s", reason);
+        check_failed(display_failure, "%s", reason);
         return false;
     }
 
@@ -364,7 +397,7 @@ bool AP_Arming_Copter::gps_checks(bool display_failure)
                 reason = "Need 3D Fix";
             }
         }
-        check_failed(ARMING_CHECK_NONE, display_failure, "%s", reason);
+        check_failed(display_failure, "%s", reason);
         return false;
     }
 
@@ -372,7 +405,7 @@ bool AP_Arming_Copter::gps_checks(bool display_failure)
     nav_filter_status filt_status;
     if (ahrs.get_filter_status(filt_status)) {
         if (filt_status.flags.gps_glitching) {
-            check_failed(ARMING_CHECK_NONE, display_failure, "GPS glitching");
+            check_failed(display_failure, "GPS glitching");
             return false;
         }
     }
@@ -383,13 +416,13 @@ bool AP_Arming_Copter::gps_checks(bool display_failure)
     Vector2f offset;
     ahrs.get_variances(vel_variance, pos_variance, hgt_variance, mag_variance, tas_variance, offset);
     if (copter.g.fs_ekf_thresh > 0 && mag_variance.length() >= copter.g.fs_ekf_thresh) {
-        check_failed(ARMING_CHECK_NONE, display_failure, "EKF compass variance");
+        check_failed(display_failure, "EKF compass variance");
         return false;
     }
 
     // check home and EKF origin are not too far
     if (copter.far_from_EKF_origin(ahrs.get_home())) {
-        check_failed(ARMING_CHECK_NONE, display_failure, "EKF-home variance");
+        check_failed(display_failure, "EKF-home variance");
         return false;
     }
 
@@ -493,7 +526,7 @@ bool AP_Arming_Copter::arm_checks(AP_Arming::Method method)
 
     // always check if inertial nav has started and is ready
     if (!ahrs.healthy()) {
-        check_failed(ARMING_CHECK_NONE, true, "AHRS not healthy");
+        check_failed(true, "AHRS not healthy");
         return false;
     }
 
@@ -503,7 +536,7 @@ bool AP_Arming_Copter::arm_checks(AP_Arming::Method method)
         const Compass &_compass = AP::compass();
         // check compass health
         if (!_compass.healthy()) {
-            check_failed(ARMING_CHECK_NONE, true, "Compass not healthy");
+            check_failed(true, "Compass not healthy");
             return false;
         }
     }
@@ -513,7 +546,7 @@ bool AP_Arming_Copter::arm_checks(AP_Arming::Method method)
 
     // always check if the current mode allows arming
     if (!copter.flightmode->allows_arming(method == AP_Arming::Method::MAVLINK)) {
-        check_failed(ARMING_CHECK_NONE, true, "Mode not armable");
+        check_failed(true, "Mode not armable");
         return false;
     }
 
@@ -525,7 +558,7 @@ bool AP_Arming_Copter::arm_checks(AP_Arming::Method method)
     // if we are using motor interlock switch and it's enabled, fail to arm
     // skip check in Throw mode which takes control of the motor interlock
     if (copter.ap.using_interlock && copter.ap.motor_interlock_switch) {
-        check_failed(ARMING_CHECK_NONE, true, "Motor Interlock Enabled");
+        check_failed(true, "Motor Interlock Enabled");
         return false;
     }
 
@@ -540,7 +573,7 @@ bool AP_Arming_Copter::arm_checks(AP_Arming::Method method)
     }
 
     // succeed if arming checks are disabled
-    if (checks_to_perform == ARMING_CHECK_NONE) {
+    if (checks_to_perform == 0) {
         return true;
     }
 
@@ -594,7 +627,7 @@ bool AP_Arming_Copter::arm_checks(AP_Arming::Method method)
 
     // check if safety switch has been pushed
     if (hal.util->safety_switch_state() == AP_HAL::Util::SAFETY_DISARMED) {
-        check_failed(ARMING_CHECK_NONE, true, "Safety Switch");
+        check_failed(true, "Safety Switch");
         return false;
     }
 
@@ -660,7 +693,7 @@ bool AP_Arming_Copter::arm(const AP_Arming::Method method, const bool do_arming_
     if (!ahrs.home_is_set()) {
         // Reset EKF altitude if home hasn't been set yet (we use EKF altitude as substitute for alt above home)
         ahrs.resetHeightDatum();
-        AP::logger().Write_Event(DATA_EKF_ALT_RESET);
+        AP::logger().Write_Event(LogEvent::EKF_ALT_RESET);
 
         // we have reset height, so arming height is zero
         copter.arming_altitude_m = 0;
@@ -695,7 +728,7 @@ bool AP_Arming_Copter::arm(const AP_Arming::Method method, const bool do_arming_
     // finally actually arm the motors
     copter.motors->armed(true);
 
-    AP::logger().Write_Event(DATA_ARMED);
+    AP::logger().Write_Event(LogEvent::ARMED);
 
     // log flight mode in case it was changed while vehicle was disarmed
     AP::logger().Write_Mode((uint8_t)copter.control_mode, copter.control_mode_reason);
@@ -764,7 +797,7 @@ bool AP_Arming_Copter::disarm()
     copter.set_land_complete(true);
     copter.set_land_complete_maybe(true);
 
-    AP::logger().Write_Event(DATA_DISARMED);
+    AP::logger().Write_Event(LogEvent::DISARMED);
 
     // send disarm command to motors
     copter.motors->armed(false);

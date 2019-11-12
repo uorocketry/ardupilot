@@ -28,7 +28,7 @@ bool ModeRTL::_enter()
     }
 
     sent_notification = false;
-
+    _loitering = false;
     return true;
 }
 
@@ -46,11 +46,20 @@ void ModeRTL::update()
         }
 
         // we have reached the destination
-        // boats keep navigating, rovers stop
-        if (rover.is_boat()) {
-            navigate_to_waypoint();
-        } else {
+        // boats loiter, rovers stop
+        if (!rover.is_boat()) {
             stop_vehicle();
+        } else {
+            // if not loitering yet, start loitering
+            if (!_loitering) {
+                _loitering = rover.mode_loiter.enter();
+            }
+            // update stop or loiter
+            if (_loitering) {
+                rover.mode_loiter.update();
+            } else {
+                stop_vehicle();
+            }
         }
 
         // update distance to destination
@@ -71,4 +80,14 @@ bool ModeRTL::get_desired_location(Location& destination) const
 bool ModeRTL::reached_destination() const
 {
     return g2.wp_nav.reached_destination();
+}
+
+// set desired speed in m/s
+bool ModeRTL::set_desired_speed(float speed)
+{
+    if (is_negative(speed)) {
+        return false;
+    }
+    g2.wp_nav.set_desired_speed(speed);
+    return true;
 }

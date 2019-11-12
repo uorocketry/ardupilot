@@ -79,7 +79,7 @@ AP_GPS_UBLOX::_request_next_config(void)
     }
 
     // Ensure there is enough space for the largest possible outgoing message
-    if (port->txspace() < (int16_t)(sizeof(struct ubx_header)+sizeof(struct ubx_cfg_nav_rate)+2)) {
+    if (port->txspace() < (uint16_t)(sizeof(struct ubx_header)+sizeof(struct ubx_cfg_nav_rate)+2)) {
         // not enough space - do it next time
         return;
     }
@@ -210,8 +210,13 @@ AP_GPS_UBLOX::_request_next_config(void)
         } else {
             _unconfigured_messages &= ~CONFIG_VERSION;
         }
-        // no need to send the initial rates, move to checking only
-        _next_message = STEP_PVT;
+        break;
+    case STEP_TMODE:
+        if (_hardware_generation >= UBLOX_F9) {
+            if (!_configure_valget(ConfigKey::TMODE_MODE)) {
+                _next_message--;
+            }
+        }
         break;
     default:
         // this case should never be reached, do a full reset if it is hit
@@ -349,7 +354,7 @@ AP_GPS_UBLOX::_verify_rate(uint8_t msg_class, uint8_t msg_id, uint8_t rate) {
 void
 AP_GPS_UBLOX::_request_port(void)
 {
-    if (port->txspace() < (int16_t)(sizeof(struct ubx_header)+2)) {
+    if (port->txspace() < (uint16_t)(sizeof(struct ubx_header)+2)) {
         // not enough space - do it next time
         return;
     }
@@ -467,6 +472,10 @@ AP_GPS_UBLOX::read(void)
 				goto reset;
             }
             _payload_counter = 0;                       // prepare to receive payload
+            if (_payload_length == 0) {
+                // bypass payload and go straight to checksum
+                _step++;
+            }
             break;
 
         // Receive message data
@@ -866,8 +875,36 @@ AP_GPS_UBLOX::_parse_gps(void)
             return false;
         }
 #endif // CONFIGURE_PPS_PIN
+        case MSG_CFG_VALGET: {
+            uint8_t cfg_len = _payload_length - sizeof(ubx_cfg_valget);
+            const uint8_t *cfg_data = (const uint8_t *)(&_buffer) + sizeof(ubx_cfg_valget);
+            while (cfg_len >= 5) {
+                ConfigKey id;
+                memcpy(&id, cfg_data, sizeof(uint32_t));
+                cfg_len -= 4;
+                cfg_data += 4;
+                switch (id) {
+                case ConfigKey::TMODE_MODE: {
+                    uint8_t mode = cfg_data[0];
+                    cfg_len -= 1;
+                    cfg_data += 1;
+                    if (mode != 0) {
+                        // ask for mode 0, to disable TIME mode
+                        mode = 0;
+                        _configure_valset(ConfigKey::TMODE_MODE, 1, &mode);
+                        _unconfigured_messages |= CONFIG_TMODE_MODE;
+                    } else {
+                        _unconfigured_messages &= ~CONFIG_TMODE_MODE;
+                    }
+                    break;
+                }
+                default:
+                    // we don't know the length so we stop parsing
+                    return false;
+                }
+            }
         }
-           
+        }
     }
 
     if (_class == CLASS_MON) {
@@ -1028,8 +1065,56 @@ AP_GPS_UBLOX::_parse_gps(void)
         state.hdop = 130;
 #endif
         break;
+    case MSG_RELPOSNED:
+        {
+            const Vector3f &offset0 = gps._antenna_offset[0].get();
+            const Vector3f &offset1 = gps._antenna_offset[1].get();
+            // note that we require the yaw to come from a fixed solution, not a float solution
+            // yaw from a float solution would only be acceptable with a very large separation between
+            // GPS modules
+            const uint32_t valid_mask = static_cast<uint32_t>(RELPOSNED::relPosHeadingValid) |
+                                        static_cast<uint32_t>(RELPOSNED::relPosValid) |
+                                        static_cast<uint32_t>(RELPOSNED::gnssFixOK) |
+                                        static_cast<uint32_t>(RELPOSNED::isMoving) |
+                                        static_cast<uint32_t>(RELPOSNED::carrSolnFixed);
+            const uint32_t invalid_mask = static_cast<uint32_t>(RELPOSNED::refPosMiss) |
+                                          static_cast<uint32_t>(RELPOSNED::refObsMiss) |
+                                          static_cast<uint32_t>(RELPOSNED::carrSolnFloat);
+
+            const float offset_dist = (offset0 - offset1).length();
+            const float rel_dist = _buffer.relposned.relPosLength * 1.0e-2;
+            const float strict_length_error_allowed = 0.2; // allow for up to 20% error
+            const float min_separation = 0.05;
+            if (((_buffer.relposned.flags & valid_mask) == valid_mask) &&
+                ((_buffer.relposned.flags & invalid_mask) == 0) &&
+                rel_dist > min_separation &&
+                offset_dist > min_separation &&
+                fabsf(offset_dist - rel_dist) / MIN(offset_dist, rel_dist) < strict_length_error_allowed) {
+                float rotation_offset_rad;
+                if (offset0.is_zero()) {
+                    rotation_offset_rad = Vector2f(offset1.x, offset1.y).angle();
+                } else if (offset1.is_zero()) {
+                    rotation_offset_rad = Vector2f(offset0.x, offset0.y).angle();
+                } else {
+                    const Vector3f diff = offset0 - offset1;
+                    rotation_offset_rad = Vector2f(diff.x, diff.y).angle();
+                }
+                if (state.instance != 0) {
+                    rotation_offset_rad += M_PI;
+                }
+                state.gps_yaw = wrap_360(_buffer.relposned.relPosHeading * 1e-5 + degrees(rotation_offset_rad));
+                state.have_gps_yaw = true;
+                state.gps_yaw_accuracy = _buffer.relposned.accHeading * 1e-5;
+                state.have_gps_yaw_accuracy = true;
+            } else {
+                state.have_gps_yaw = false;
+                state.have_gps_yaw_accuracy = false;
+            }
+        }
+        break;
     case MSG_PVT:
         Debug("MSG_PVT");
+
         havePvtMsg = true;
         // position
         _check_new_itow(_buffer.pvt.itow);
@@ -1262,7 +1347,7 @@ AP_GPS_UBLOX::_request_message_rate(uint8_t msg_class, uint8_t msg_id)
 bool
 AP_GPS_UBLOX::_configure_message_rate(uint8_t msg_class, uint8_t msg_id, uint8_t rate)
 {
-    if (port->txspace() < (int16_t)(sizeof(struct ubx_header)+sizeof(struct ubx_cfg_msg_rate)+2)) {
+    if (port->txspace() < (uint16_t)(sizeof(struct ubx_header)+sizeof(struct ubx_cfg_msg_rate)+2)) {
         return false;
     }
 
@@ -1271,6 +1356,52 @@ AP_GPS_UBLOX::_configure_message_rate(uint8_t msg_class, uint8_t msg_id, uint8_t
     msg.msg_id    = msg_id;
     msg.rate      = rate;
     return _send_message(CLASS_CFG, MSG_CFG_MSG, &msg, sizeof(msg));
+}
+
+/*
+ *  configure F9 based key/value pair - VALSET
+ */
+bool
+AP_GPS_UBLOX::_configure_valset(ConfigKey key, const uint8_t len, const uint8_t *value)
+{
+    if (_hardware_generation < UBLOX_F9) {
+        return false;
+    }
+    struct ubx_cfg_valset msg {};
+    uint8_t buf[sizeof(msg)+len];
+    if (port->txspace() < (uint16_t)(sizeof(struct ubx_header)+sizeof(buf)+2)) {
+        return false;
+    }
+    msg.version = 1;
+    msg.layers = 7; // all layers
+    msg.transaction = 0;
+    msg.key = uint32_t(key);
+    memcpy(buf, &msg, sizeof(msg));
+    memcpy(&buf[sizeof(msg)], value, len);
+    auto ret = _send_message(CLASS_CFG, MSG_CFG_VALSET, buf, sizeof(buf));
+    return ret;
+}
+
+/*
+ *  configure F9 based key/value pair - VALGET
+ */
+bool
+AP_GPS_UBLOX::_configure_valget(ConfigKey key)
+{
+    if (_hardware_generation < UBLOX_F9) {
+        return false;
+    }
+    struct {
+        struct ubx_cfg_valget msg;
+        ConfigKey key;
+    } msg {};
+    if (port->txspace() < (uint16_t)(sizeof(struct ubx_header)+sizeof(msg)+2)) {
+        return false;
+    }
+    msg.msg.version = 0;
+    msg.msg.layers = 0; // ram
+    msg.key = key;
+    return _send_message(CLASS_CFG, MSG_CFG_VALGET, &msg, sizeof(msg));
 }
 
 /*

@@ -145,11 +145,13 @@ public:
         float speed_accuracy;               ///< 3D velocity RMS accuracy estimate in m/s
         float horizontal_accuracy;          ///< horizontal RMS accuracy estimate in m
         float vertical_accuracy;            ///< vertical RMS accuracy estimate in m
+        float gps_yaw_accuracy;           ///< heading accuracy of the GPS in degrees
         bool have_vertical_velocity;      ///< does GPS give vertical velocity? Set to true only once available.
         bool have_speed_accuracy;         ///< does GPS give speed accuracy? Set to true only once available.
         bool have_horizontal_accuracy;    ///< does GPS give horizontal position accuracy? Set to true only once available.
         bool have_vertical_accuracy;      ///< does GPS give vertical position accuracy? Set to true only once available.
         bool have_gps_yaw;                ///< does GPS give yaw? Set to true only once available.
+        bool have_gps_yaw_accuracy;       ///< does the GPS give a heading accuracy estimate? Set to true only once available
         uint32_t last_gps_time_ms;          ///< the system time we got the last GPS timestamp, milliseconds
         uint32_t uart_timestamp_ms;         ///< optional timestamp from set_uart_timestamp()
 
@@ -270,11 +272,12 @@ public:
             return false;
         }
         yaw_deg = state[instance].gps_yaw;
-        // None of the GPS backends can provide this yet, so we hard
-        // code a fixed value of 10 degrees, which seems like a
-        // reasonable guess. Once a backend can provide a proper
-        // estimate we can implement it
-        accuracy_deg = 10;
+        if (state[instance].have_gps_yaw_accuracy) {
+            accuracy_deg = state[instance].gps_yaw_accuracy;
+        } else {
+            // fall back to 10 degrees as a generic default
+            accuracy_deg = 10;
+        }
         return true;
     }
     bool gps_yaw_deg(float &yaw_deg, float &accuracy_deg) const {
@@ -433,6 +436,9 @@ public:
         _force_disable_gps = disable;
     }
 
+    // handle possibly fragmented RTCM injection data
+    void handle_gps_rtcm_fragment(uint8_t flags, const uint8_t *data, uint8_t len);
+
 protected:
 
     // configuration parameters
@@ -543,9 +549,8 @@ private:
     void handle_gps_inject(const mavlink_message_t &msg);
 
     //Inject a packet of raw binary to a GPS
-    void inject_data(uint8_t *data, uint16_t len);
-    void inject_data(uint8_t instance, uint8_t *data, uint16_t len);
-
+    void inject_data(const uint8_t *data, uint16_t len);
+    void inject_data(uint8_t instance, const uint8_t *data, uint16_t len);
 
     // GPS blending and switching
     Vector2f _NE_pos_offset_m[GPS_MAX_RECEIVERS]; // Filtered North,East position offset from GPS instance to blended solution in _output_state.location (m)
@@ -566,6 +571,8 @@ private:
 
     bool should_log() const;
 
+    bool needs_uart(GPS_Type type) const;
+
     // Auto configure types
     enum GPS_AUTO_CONFIG {
         GPS_AUTO_CONFIG_DISABLE = 0,
@@ -574,6 +581,9 @@ private:
 
     // used for flight testing with GPS loss
     bool _force_disable_gps;
+
+    // used to ensure we continue sending status messages if we ever detected the second GPS
+    bool has_had_second_instance;
 };
 
 namespace AP {

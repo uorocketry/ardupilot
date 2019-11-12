@@ -77,13 +77,14 @@
 #define CONFIG_RATE_PVT      (1<<13)
 #define CONFIG_TP5           (1<<14)
 #define CONFIG_RATE_TIMEGPS  (1<<15)
+#define CONFIG_TMODE_MODE    (1<<16)
 #define CONFIG_LAST          (1<<16) // this must always be the last bit
 
 #define CONFIG_REQUIRED_INITIAL (CONFIG_RATE_NAV | CONFIG_RATE_POSLLH | CONFIG_RATE_STATUS | CONFIG_RATE_VELNED)
 
 #define CONFIG_ALL (CONFIG_RATE_NAV | CONFIG_RATE_POSLLH | CONFIG_RATE_STATUS | CONFIG_RATE_SOL | CONFIG_RATE_VELNED \
                     | CONFIG_RATE_DOP | CONFIG_RATE_MON_HW | CONFIG_RATE_MON_HW2 | CONFIG_RATE_RAW | CONFIG_VERSION \
-                    | CONFIG_NAV_SETTINGS | CONFIG_GNSS | CONFIG_SBAS)
+                    | CONFIG_NAV_SETTINGS | CONFIG_GNSS | CONFIG_SBAS | CONFIG_TMODE_MODE)
 
 //Configuration Sub-Sections
 #define SAVE_CFG_IO     (1<<0)
@@ -211,6 +212,23 @@ private:
         uint8_t scanmode2;
         uint32_t scanmode1;
     };
+    // F9 config keys
+    enum class ConfigKey : uint32_t {
+        TMODE_MODE = 0x20030001,
+    };
+    struct PACKED ubx_cfg_valset {
+        uint8_t version;
+        uint8_t layers;
+        uint8_t transaction;
+        uint8_t reserved[1];
+        uint32_t key;
+    };
+    struct PACKED ubx_cfg_valget {
+        uint8_t version;
+        uint8_t layers;
+        uint8_t reserved[2];
+        // variable length data, check buffer length
+    };
     struct PACKED ubx_nav_posllh {
         uint32_t itow;                                  // GPS msToW
         int32_t longitude;
@@ -281,6 +299,30 @@ private:
         uint32_t headVeh;
         uint8_t reserved2[4]; 
     };
+    struct PACKED ubx_nav_relposned {
+        uint8_t version;
+        uint8_t reserved1;
+        uint16_t refStationId;
+        uint32_t iTOW;
+        int32_t relPosN;
+        int32_t relPosE;
+        int32_t relPosD;
+        int32_t relPosLength;
+        int32_t relPosHeading;
+        uint8_t reserved2[4];
+        int8_t relPosHPN;
+        int8_t relPosHPE;
+        int8_t relPosHPD;
+        int8_t relPosHPLength;
+        uint32_t accN;
+        uint32_t accE;
+        uint32_t accD;
+        uint32_t accLength;
+        uint32_t accHeading;
+        uint8_t reserved3[4];
+        uint32_t flags;
+    };
+
     struct PACKED ubx_nav_velned {
         uint32_t itow;                                  // GPS msToW
         int32_t ned_north;
@@ -443,13 +485,28 @@ private:
         ubx_cfg_gnss gnss;
 #endif
         ubx_cfg_sbas sbas;
+        ubx_cfg_valget valget;
         ubx_nav_svinfo_header svinfo_header;
+        ubx_nav_relposned relposned;
 #if UBLOX_RXM_RAW_LOGGING
         ubx_rxm_raw rxm_raw;
         ubx_rxm_rawx rxm_rawx;
 #endif
         ubx_ack_ack ack;
     } _buffer;
+
+    enum class RELPOSNED {
+        gnssFixOK          = 1U << 0,
+        diffSoln           = 1U << 1,
+        relPosValid        = 1U << 2,
+        carrSolnFloat      = 1U << 3,
+        carrSolnFixed      = 1U << 4,
+        isMoving           = 1U << 5,
+        refPosMiss         = 1U << 6,
+        refObsMiss         = 1U << 7,
+        relPosHeadingValid = 1U << 8,
+        relPosNormalized   = 1U << 9
+    };
 
     enum ubs_protocol_bytes {
         PREAMBLE1 = 0xb5,
@@ -467,6 +524,7 @@ private:
         MSG_SOL = 0x6,
         MSG_PVT = 0x7,
         MSG_TIMEGPS = 0x20,
+        MSG_RELPOSNED = 0x3c,
         MSG_VELNED = 0x12,
         MSG_CFG_CFG = 0x09,
         MSG_CFG_RATE = 0x08,
@@ -476,6 +534,8 @@ private:
         MSG_CFG_SBAS = 0x16,
         MSG_CFG_GNSS = 0x3E,
         MSG_CFG_TP5 = 0x31,
+        MSG_CFG_VALSET = 0x8A,
+        MSG_CFG_VALGET = 0x8B,
         MSG_MON_HW = 0x09,
         MSG_MON_HW2 = 0x0B,
         MSG_MON_VER = 0x04,
@@ -529,6 +589,7 @@ private:
         STEP_POLL_NAV, // poll NAV settings
         STEP_POLL_GNSS, // poll GNSS
         STEP_POLL_TP5, // poll TP5
+        STEP_TMODE, // set TMODE-MODE
         STEP_DOP,
         STEP_MON_HW,
         STEP_MON_HW2,
@@ -585,6 +646,8 @@ private:
     bool havePvtMsg;
 
     bool        _configure_message_rate(uint8_t msg_class, uint8_t msg_id, uint8_t rate);
+    bool        _configure_valset(ConfigKey key, const uint8_t len, const uint8_t *value);
+    bool        _configure_valget(ConfigKey key);
     void        _configure_rate(void);
     void        _configure_sbas(bool enable);
     void        _update_checksum(uint8_t *data, uint16_t len, uint8_t &ck_a, uint8_t &ck_b);

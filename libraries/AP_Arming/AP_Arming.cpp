@@ -41,6 +41,7 @@
   #if APM_BUILD_TYPE(APM_BUILD_ArduCopter) || APM_BUILD_TYPE(APM_BUILD_ArduPlane) || APM_BUILD_TYPE(APM_BUILD_ArduSub)
     #include <AP_KDECAN/AP_KDECAN.h>
   #endif
+  #include <AP_UAVCAN/AP_UAVCAN.h>
 #endif
 
 #include <AP_Logger/AP_Logger.h>
@@ -155,8 +156,7 @@ bool AP_Arming::check_enabled(const enum AP_Arming::ArmingChecks check) const
 
 MAV_SEVERITY AP_Arming::check_severity(const enum AP_Arming::ArmingChecks check) const
 {
-    // A check value of ARMING_CHECK_NONE means that the check is always run
-    if (check_enabled(check) || check == ARMING_CHECK_NONE) {
+    if (check_enabled(check)) {
         return MAV_SEVERITY_CRITICAL;
     }
     return MAV_SEVERITY_DEBUG; // technically should be NOTICE, but will annoy users at that level
@@ -173,6 +173,19 @@ void AP_Arming::check_failed(const enum AP_Arming::ArmingChecks check, bool repo
     va_list arg_list;
     va_start(arg_list, fmt);
     gcs().send_textv(severity, taggedfmt, arg_list);
+    va_end(arg_list);
+}
+
+void AP_Arming::check_failed(bool report, const char *fmt, ...) const
+{
+    if (!report) {
+        return;
+    }
+    char taggedfmt[MAVLINK_MSG_STATUSTEXT_FIELD_TEXT_LEN+1];
+    hal.util->snprintf(taggedfmt, sizeof(taggedfmt), "PreArm: %s", fmt);
+    va_list arg_list;
+    va_start(arg_list, fmt);
+    gcs().send_textv(MAV_SEVERITY_CRITICAL, taggedfmt, arg_list);
     va_end(arg_list);
 }
 
@@ -356,13 +369,13 @@ bool AP_Arming::compass_checks(bool report)
 
     // check if compass is calibrating
     if (_compass.is_calibrating()) {
-        check_failed(ARMING_CHECK_NONE, report, "Compass calibration running");
+        check_failed(report, "Compass calibration running");
         return false;
     }
 
     // check if compass has calibrated and requires reboot
     if (_compass.compass_cal_requires_reboot()) {
-        check_failed(ARMING_CHECK_NONE, report, "Compass calibrated requires reboot");
+        check_failed(report, "Compass calibrated requires reboot");
         return false;
     }
 
@@ -628,18 +641,18 @@ bool AP_Arming::servo_checks(bool report) const
 
         const uint16_t trim = c->get_trim();
         if (c->get_output_min() > trim) {
-            check_failed(ARMING_CHECK_NONE, report, "SERVO%d minimum is greater than trim", i + 1);
+            check_failed(report, "SERVO%d minimum is greater than trim", i + 1);
             check_passed = false;
         }
         if (c->get_output_max() < trim) {
-            check_failed(ARMING_CHECK_NONE, report, "SERVO%d maximum is less than trim", i + 1);
+            check_failed(report, "SERVO%d maximum is less than trim", i + 1);
             check_passed = false;
         }
     }
 
 #if HAL_WITH_IO_MCU
     if (!iomcu.healthy()) {
-        check_failed(ARMING_CHECK_NONE, report, "IOMCU is unhealthy");
+        check_failed(report, "IOMCU is unhealthy");
         check_passed = false;
     }
 #endif
@@ -687,7 +700,7 @@ bool AP_Arming::system_checks(bool report)
         }
     }
     if (AP::internalerror().errors() != 0) {
-        check_failed(ARMING_CHECK_NONE, report, "Internal errors (0x%x)", (unsigned int)AP::internalerror().errors());
+        check_failed(report, "Internal errors (0x%x)", (unsigned int)AP::internalerror().errors());
         return false;
     }
 
@@ -703,13 +716,13 @@ bool AP_Arming::proximity_checks(bool report) const
     if (proximity == nullptr) {
         return true;
     }
-    if (proximity->get_status() == AP_Proximity::Proximity_NotConnected) {
+    if (proximity->get_status() == AP_Proximity::Status::NotConnected) {
         return true;
     }
 
     // return false if proximity sensor unhealthy
-    if (proximity->get_status() < AP_Proximity::Proximity_Good) {
-        check_failed(ARMING_CHECK_NONE, report, "check proximity sensor");
+    if (proximity->get_status() < AP_Proximity::Status::Good) {
+        check_failed(report, "check proximity sensor");
         return false;
     }
 
@@ -720,7 +733,7 @@ bool AP_Arming::can_checks(bool report)
 {
 #if HAL_WITH_UAVCAN
     if (check_enabled(ARMING_CHECK_SYSTEM)) {
-        const char *fail_msg = nullptr;
+        char fail_msg[50] = {};
         uint8_t num_drivers = AP::can().get_num_drivers();
 
         for (uint8_t i = 0; i < num_drivers; i++) {
@@ -729,21 +742,22 @@ bool AP_Arming::can_checks(bool report)
 // To be replaced with macro saying if KDECAN library is included
 #if APM_BUILD_TYPE(APM_BUILD_ArduCopter) || APM_BUILD_TYPE(APM_BUILD_ArduPlane) || APM_BUILD_TYPE(APM_BUILD_ArduSub)
                     AP_KDECAN *ap_kdecan = AP_KDECAN::get_kdecan(i);
-                    if (ap_kdecan != nullptr && !ap_kdecan->pre_arm_check(fail_msg)) {
-                        if (fail_msg == nullptr) {
-                            check_failed(ARMING_CHECK_SYSTEM, report, "KDECAN failed");
-                        } else {
-                            check_failed(ARMING_CHECK_SYSTEM, report, "%s", fail_msg);
-                        }
-
+                    snprintf(fail_msg, ARRAY_SIZE(fail_msg), "KDECAN failed");
+                    if (ap_kdecan != nullptr && !ap_kdecan->pre_arm_check(fail_msg, ARRAY_SIZE(fail_msg))) {
+                        check_failed(ARMING_CHECK_SYSTEM, report, "%s", fail_msg);
                         return false;
                     }
                     break;
-#else
-                    UNUSED_RESULT(fail_msg); // prevent unused variable error
 #endif
                 }
                 case AP_BoardConfig_CAN::Protocol_Type_UAVCAN:
+                {
+                    snprintf(fail_msg, ARRAY_SIZE(fail_msg), "UAVCAN failed");
+                    if (!AP::uavcan_dna_server().prearm_check(fail_msg, ARRAY_SIZE(fail_msg))) {
+                        check_failed(ARMING_CHECK_SYSTEM, report, "%s", fail_msg);
+                        return false;
+                    }
+                }
                 case AP_BoardConfig_CAN::Protocol_Type_None:
                 default:
                     break;
@@ -769,9 +783,9 @@ bool AP_Arming::fence_checks(bool display_failure)
     }
 
     if (fail_msg == nullptr) {
-        check_failed(ARMING_CHECK_NONE, display_failure, "Check fence");
+        check_failed(display_failure, "Check fence");
     } else {
-        check_failed(ARMING_CHECK_NONE, display_failure, "%s", fail_msg);
+        check_failed(display_failure, "%s", fail_msg);
     }
 
     return false;

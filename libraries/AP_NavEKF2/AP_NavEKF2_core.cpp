@@ -43,12 +43,7 @@ NavEKF2_core::NavEKF2_core(NavEKF2 *_frontend) :
     _perf_FuseSideslip(hal.util->perf_alloc(AP_HAL::Util::PC_ELAPSED, "EK2_FuseSideslip")),
     _perf_TerrainOffset(hal.util->perf_alloc(AP_HAL::Util::PC_ELAPSED, "EK2_TerrainOffset")),
     _perf_FuseOptFlow(hal.util->perf_alloc(AP_HAL::Util::PC_ELAPSED, "EK2_FuseOptFlow")),
-    frontend(_frontend),
-    // setup the intermediate variables shared by all cores (to save memory)
-    common((struct core_common *)_frontend->core_common),
-    KH(common->KH),
-    KHP(common->KHP),
-    nextP(common->nextP)
+    frontend(_frontend)
 {
     _perf_test[0] = hal.util->perf_alloc(AP_HAL::Util::PC_ELAPSED, "EK2_Test0");
     _perf_test[1] = hal.util->perf_alloc(AP_HAL::Util::PC_ELAPSED, "EK2_Test1");
@@ -175,7 +170,9 @@ void NavEKF2_core::InitialiseVariables()
     lastKnownPositionNE.zero();
     prevTnb.zero();
     memset(&P[0][0], 0, sizeof(P));
-    memset(common, 0, sizeof(*common));
+    memset(&KH[0][0], 0, sizeof(KH));
+    memset(&KHP[0][0], 0, sizeof(KHP));
+    memset(&nextP[0][0], 0, sizeof(nextP));
     flowDataValid = false;
     rangeDataToFuse  = false;
     Popt = 0.0f;
@@ -244,8 +241,7 @@ void NavEKF2_core::InitialiseVariables()
     gpsVertVelFilt = 0.0f;
     gpsHorizVelFilt = 0.0f;
     memset(&statesArray, 0, sizeof(statesArray));
-    posDownDerivative = 0.0f;
-    posDown = 0.0f;
+    memset(&vertCompFiltState, 0, sizeof(vertCompFiltState));
     posVelFusionDelayed = false;
     optFlowFusionDelayed = false;
     airSpdFusionDelayed = false;
@@ -339,6 +335,9 @@ void NavEKF2_core::InitialiseVariables()
     // now init mag variables
     yawAlignComplete = false;
     have_table_earth_field = false;
+
+    // initialise pre-arm message
+    hal.util->snprintf(prearm_fail_string, sizeof(prearm_fail_string), "EKF2 still initialising");
 
     InitialiseVariablesMag();
 }
@@ -533,12 +532,6 @@ void NavEKF2_core::CovarianceInit()
 // Update Filter States - this should be called whenever new IMU data is available
 void NavEKF2_core::UpdateFilter(bool predict)
 {
-#if CONFIG_HAL_BOARD == HAL_BOARD_SITL
-    // fill the common variables with NaN, so we catch any cases in
-    // SITL where they are used without initialisation
-    fill_nanf((float *)common, sizeof(*common)/sizeof(float));
-#endif
-
     // Set the flag to indicate to the filter that the front-end has given permission for a new state prediction cycle to be started
     startPredictEnabled = predict;
 
@@ -554,6 +547,8 @@ void NavEKF2_core::UpdateFilter(bool predict)
     timing_start_us = AP_HAL::micros();
 #endif
     hal.util->perf_begin(_perf_UpdateFilter);
+
+    fill_scratch_variables();
 
     // TODO - in-flight restart method
 
@@ -757,6 +752,24 @@ void NavEKF2_core::calcOutputStates()
 
     // sum delta velocities to get velocity
     outputDataNew.velocity += delVelNav;
+
+    // Implement third order complementary filter for height and height rate
+    // Reference Paper :
+    // Optimizing the Gains of the Baro-Inertial Vertical Channel
+    // Widnall W.S, Sinha P.K,
+    // AIAA Journal of Guidance and Control, 78-1307R
+
+    // Perform filter calculation using backwards Euler integration
+    // Coefficients selected to place all three filter poles at omega
+    const float CompFiltOmega = M_2PI * constrain_float(frontend->_hrt_filt_freq, 0.1f, 30.0f);
+    float omega2 = CompFiltOmega * CompFiltOmega;
+    float pos_err = outputDataNew.position.z - vertCompFiltState.pos;
+    float integ1_input = pos_err * omega2 * CompFiltOmega * imuDataNew.delVelDT;
+    vertCompFiltState.acc += integ1_input;
+    float integ2_input = delVelNav.z + (vertCompFiltState.acc + pos_err * omega2 * 3.0f) * imuDataNew.delVelDT;
+    vertCompFiltState.vel += integ2_input;
+    float integ3_input = (vertCompFiltState.vel + pos_err * CompFiltOmega * 3.0f) * imuDataNew.delVelDT;
+    vertCompFiltState.pos += integ3_input; 
 
     // apply a trapezoidal integration to velocities to calculate position
     outputDataNew.position += (outputDataNew.velocity + lastVelocity) * (imuDataNew.delVelDT*0.5f);
@@ -1413,8 +1426,8 @@ void NavEKF2_core::StoreOutputReset()
     }
     outputDataDelayed = outputDataNew;
     // reset the states for the complementary filter used to provide a vertical position dervative output
-    posDown = stateStruct.position.z;
-    posDownDerivative = stateStruct.velocity.z;
+    vertCompFiltState.pos = stateStruct.position.z;
+    vertCompFiltState.vel = stateStruct.velocity.z;
 }
 
 // Reset the stored output quaternion history to current EKF state

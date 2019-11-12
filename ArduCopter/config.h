@@ -354,6 +354,12 @@
 #endif
 
 //////////////////////////////////////////////////////////////////////////////
+// System ID - conduct system identification tests on vehicle
+#ifndef MODE_SYSTEMID_ENABLED
+# define MODE_SYSTEMID_ENABLED !HAL_MINIMIZE_FEATURES
+#endif
+
+//////////////////////////////////////////////////////////////////////////////
 // Throw - fly vehicle after throwing it in the air
 #ifndef MODE_THROW_ENABLED
 # define MODE_THROW_ENABLED ENABLED
@@ -369,6 +375,12 @@
 // Beacon support - support for local positioning systems
 #ifndef BEACON_ENABLED
 # define BEACON_ENABLED !HAL_MINIMIZE_FEATURES
+#endif
+
+//////////////////////////////////////////////////////////////////////////////
+// Button - Enable the button connected to AUX1-6
+#ifndef BUTTON_ENABLED
+ # define BUTTON_ENABLED ENABLED
 #endif
 
 //////////////////////////////////////////////////////////////////////////////

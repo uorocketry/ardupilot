@@ -18,8 +18,6 @@ protected:
     uint8_t sysid_my_gcs() const override;
     bool sysid_enforce() const override;
 
-    bool set_mode(uint8_t mode) override;
-
     bool params_ready() const override;
     void send_banner() override;
 
@@ -29,7 +27,7 @@ protected:
     void send_position_target_local_ned() override;
 
     MAV_RESULT handle_command_do_set_roi(const Location &roi_loc) override;
-
+    MAV_RESULT handle_preflight_reboot(const mavlink_command_long_t &packet) override;
     MAV_RESULT handle_command_mount(const mavlink_command_long_t &packet) override;
     MAV_RESULT handle_command_int_packet(const mavlink_command_int_t &packet) override;
     MAV_RESULT handle_command_long_packet(const mavlink_command_long_t &packet) override;

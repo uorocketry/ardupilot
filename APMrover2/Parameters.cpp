@@ -275,7 +275,7 @@ const AP_Param::Info Rover::var_info[] = {
     GOBJECT(L1_controller,         "NAVL1_",   AP_L1_Control),
 
     // @Group: RNGFND
-    // @Path: ../libraries/AP_RangeFinder/RangeFinder.cpp
+    // @Path: ../libraries/AP_RangeFinder/AP_RangeFinder.cpp
     GOBJECT(rangefinder,                 "RNGFND", RangeFinder),
 
     // @Group: INS_
@@ -511,7 +511,7 @@ const AP_Param::GroupInfo ParametersG2::var_info[] = {
     // @Param: LOIT_TYPE
     // @DisplayName: Loiter type
     // @Description: Loiter behaviour when moving to the target point
-    // @Values: 0:Forward or reverse to target point,1:Always face bow towards target point
+    // @Values: 0:Forward or reverse to target point,1:Always face bow towards target point,2:Always face stern towards target point
     // @User: Standard
     AP_GROUPINFO("LOIT_TYPE", 25, ParametersG2, loit_type, 0),
 
@@ -558,8 +558,8 @@ const AP_Param::GroupInfo ParametersG2::var_info[] = {
 
     // @Param: MIS_DONE_BEHAVE
     // @DisplayName: Mission done behave
-    // @Description: Mode to become after mission done
-    // @Values: 0:Hold,1:Loiter, 2:Acro
+    // @Description: Behaviour after mission completes
+    // @Values: 0:Hold,1:Loiter,2:Acro
     // @User: Standard
     AP_GROUPINFO("MIS_DONE_BEHAVE", 38, ParametersG2, mis_done_behave, 0),
 
@@ -620,6 +620,14 @@ const AP_Param::GroupInfo ParametersG2::var_info[] = {
     // @User: Advanced
     AP_GROUPINFO("LOIT_SPEED_GAIN", 47, ParametersG2, loiter_speed_gain, 0.5f),
 
+    // @Param: FS_OPTIONS
+    // @DisplayName: Rover Failsafe Options
+    // @Description: Bitmask to enable Rover failsafe options
+    // @Values: 0:None,1:Failsafe enabled in Hold mode
+    // @Bitmask: 0:Failsafe enabled in Hold mode
+    // @User: Advanced
+    AP_GROUPINFO("FS_OPTIONS", 48, ParametersG2, fs_options, 0),
+
     AP_GROUPEND
 };
 
@@ -663,7 +671,7 @@ ParametersG2::ParametersG2(void)
     wheel_rate_control(wheel_encoder),
     attitude_control(rover.ahrs),
     smart_rtl(),
-    proximity(rover.serial_manager),
+    proximity(),
     avoid(),
     follow(),
     windvane(),

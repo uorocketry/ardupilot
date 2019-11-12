@@ -23,26 +23,15 @@ extern const AP_HAL::HAL& hal;
 
 #define PROXIMITY_MAV_TIMEOUT_MS    500 // distance messages must arrive within this many milliseconds
 
-/* 
-   The constructor also initialises the proximity sensor. Note that this
-   constructor is not called until detect() returns true, so we
-   already know that we should setup the proximity sensor
-*/
-AP_Proximity_MAV::AP_Proximity_MAV(AP_Proximity &_frontend,
-                                   AP_Proximity::Proximity_State &_state) :
-    AP_Proximity_Backend(_frontend, _state)
-{
-}
-
 // update the state of the sensor
 void AP_Proximity_MAV::update(void)
 {
     // check for timeout and set health status
     if ((_last_update_ms == 0 || (AP_HAL::millis() - _last_update_ms > PROXIMITY_MAV_TIMEOUT_MS)) &&
         (_last_upward_update_ms == 0 || (AP_HAL::millis() - _last_upward_update_ms > PROXIMITY_MAV_TIMEOUT_MS))) {
-        set_status(AP_Proximity::Proximity_NoData);
+        set_status(AP_Proximity::Status::NoData);
     } else {
-        set_status(AP_Proximity::Proximity_Good);
+        set_status(AP_Proximity::Status::Good);
     }
 }
 
@@ -101,7 +90,7 @@ void AP_Proximity_MAV::handle_msg(const mavlink_message_t &msg)
         }
 
         const float MAX_DISTANCE = 9999.0f;
-        const uint8_t total_distances = MIN(((360.0f / fabs(increment)) + 0.5f), MAVLINK_MSG_OBSTACLE_DISTANCE_FIELD_DISTANCES_LEN); // usually 72
+        const uint8_t total_distances = MIN(((360.0f / fabsf(increment)) + 0.5f), MAVLINK_MSG_OBSTACLE_DISTANCE_FIELD_DISTANCES_LEN); // usually 72
 
         // set distance min and max
         _distance_min = packet.min_distance * 0.01f;
