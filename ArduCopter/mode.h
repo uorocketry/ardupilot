@@ -445,6 +445,7 @@ private:
 #endif
     void do_payload_place(const AP_Mission::Mission_Command& cmd);
     void do_RTL(void);
+    void do_drop();
 
     bool verify_takeoff();
     bool verify_land();
@@ -463,6 +464,7 @@ private:
     bool verify_nav_guided_enable(const AP_Mission::Mission_Command& cmd);
 #endif
     bool verify_nav_delay(const AP_Mission::Mission_Command& cmd);
+    bool verify_drop(const AP_Mission::Mission_Command& cmd);
 
     // Loiter control
     uint16_t loiter_time_max;                // How long we should stay in Loiter Mode for mission scripting (time in seconds)
@@ -483,6 +485,9 @@ private:
     // Delay Mission Scripting Command
     int32_t condition_value;  // used in condition commands (eg delay, change alt, etc.)
     uint32_t condition_start;
+
+    //Keep track of the highest altitude for the WAIT_FOR_DROP command
+    float max_alt;
 
     LandStateType land_state = LandStateType_FlyToLocation; // records state of land (flying to location, descending)
 
