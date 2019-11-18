@@ -428,7 +428,7 @@ bool Mode::_TakeOff::triggered(const float target_climb_rate) const
 
 bool Mode::is_disarmed_or_landed() const
 {
-    if (!motors->armed() || !copter.ap.auto_armed || copter.ap.land_complete) {
+    if (!motors->armed() || copter.ap.land_complete) {
         return true;
     }
     return false;
