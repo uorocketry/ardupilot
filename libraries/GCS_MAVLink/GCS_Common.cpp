@@ -38,6 +38,7 @@
 #include <AP_VisualOdom/AP_VisualOdom.h>
 #include <AP_OpticalFlow/OpticalFlow.h>
 #include <AP_Baro/AP_Baro.h>
+#include <AP_EFI/AP_EFI.h>
 
 #include <stdio.h>
 
@@ -783,6 +784,7 @@ ap_message GCS_MAVLINK::mavlink_id_to_ap_message_id(const uint32_t mavlink_id) c
         { MAVLINK_MSG_ID_DEEPSTALL,             MSG_LANDING},
         { MAVLINK_MSG_ID_EXTENDED_SYS_STATE,    MSG_EXTENDED_SYS_STATE},
         { MAVLINK_MSG_ID_AUTOPILOT_VERSION,     MSG_AUTOPILOT_VERSION},
+        { MAVLINK_MSG_ID_EFI_STATUS,            MSG_EFI_STATUS},
             };
 
     for (uint8_t i=0; i<ARRAY_SIZE(map); i++) {
@@ -1969,6 +1971,7 @@ void GCS::setup_uarts()
     }
 
 #if !HAL_MINIMIZE_FEATURES
+    ltm_telemetry.init();
     devo_telemetry.init();
 #endif
 }
@@ -2221,6 +2224,22 @@ void GCS_MAVLINK::send_gps_global_origin() const
         ekf_origin.lng,
         ekf_origin.alt * 10,
         AP_HAL::micros64());
+}
+
+MAV_STATE GCS_MAVLINK::system_status() const
+{
+    MAV_STATE _system_status = vehicle_system_status();
+    if (_system_status < MAV_STATE_CRITICAL) {
+        // note that POWEROFF and FLIGHT_TERMINATION are both >
+        // CRITICAL, so we will not overwrite POWEROFF and
+        // FLIGHT_TERMINATION even if we have internal errors.  If new
+        // enum entries are added then this may also not overwrite
+        // those.
+        if (AP::internalerror().errors()) {
+            _system_status = MAV_STATE_CRITICAL;
+        }
+    }
+    return _system_status;
 }
 
 /*
@@ -4472,6 +4491,17 @@ bool GCS_MAVLINK::try_send_message(const enum ap_message id)
                 default:
                     break;
             }
+        }
+#endif
+        break;
+    }
+
+    case MSG_EFI_STATUS: {
+#if EFI_ENABLED
+        CHECK_PAYLOAD_SIZE(EFI_STATUS);
+        AP_EFI *efi = AP::EFI();
+        if (efi) {
+            efi->send_mavlink_status(chan);
         }
 #endif
         break;

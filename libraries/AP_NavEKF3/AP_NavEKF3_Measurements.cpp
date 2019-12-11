@@ -5,6 +5,7 @@
 #include <AP_AHRS/AP_AHRS.h>
 #include <AP_Vehicle/AP_Vehicle.h>
 #include <GCS_MAVLink/GCS.h>
+#include <AP_RangeFinder/AP_RangeFinder.h>
 #include <AP_RangeFinder/AP_RangeFinder_Backend.h>
 #include <AP_GPS/AP_GPS.h>
 #include <AP_Baro/AP_Baro.h>
@@ -25,7 +26,11 @@ void NavEKF3_core::readRangeFinder(void)
     uint8_t minIndex;
     // get theoretical correct range when the vehicle is on the ground
     // don't allow range to go below 5cm because this can cause problems with optical flow processing
-    rngOnGnd = MAX(frontend->_rng.ground_clearance_cm_orient(ROTATION_PITCH_270) * 0.01f, 0.05f);
+    const RangeFinder *_rng = AP::rangefinder();
+    if (_rng == nullptr) {
+        return;
+    }
+    rngOnGnd = MAX(_rng->ground_clearance_cm_orient(ROTATION_PITCH_270) * 0.01f, 0.05f);
 
     // limit update rate to maximum allowed by data buffers
     if ((imuSampleTime_ms - lastRngMeasTime_ms) > frontend->sensorIntervalMin_ms) {
@@ -37,7 +42,7 @@ void NavEKF3_core::readRangeFinder(void)
         // use data from two range finders if available
 
         for (uint8_t sensorIndex = 0; sensorIndex <= 1; sensorIndex++) {
-            AP_RangeFinder_Backend *sensor = frontend->_rng.get_backend(sensorIndex);
+            AP_RangeFinder_Backend *sensor = _rng->get_backend(sensorIndex);
             if (sensor == nullptr) {
                 continue;
             }
@@ -608,13 +613,16 @@ void NavEKF3_core::readGpsData()
             }
 
             if (gpsGoodToAlign && !have_table_earth_field) {
-                table_earth_field_ga = AP_Declination::get_earth_field_ga(gpsloc);
-                table_declination = radians(AP_Declination::get_declination(gpsloc.lat*1.0e-7,
+                const Compass *compass = _ahrs->get_compass();
+                if (compass && compass->have_scale_factor(magSelectIndex)) {
+                    table_earth_field_ga = AP_Declination::get_earth_field_ga(gpsloc);
+                    table_declination = radians(AP_Declination::get_declination(gpsloc.lat*1.0e-7,
                                                                             gpsloc.lng*1.0e-7));
-                have_table_earth_field = true;
-                if (frontend->_mag_ef_limit > 0) {
-                    // initialise earth field from tables
-                    stateStruct.earth_magfield = table_earth_field_ga;
+                    have_table_earth_field = true;
+                    if (frontend->_mag_ef_limit > 0) {
+                        // initialise earth field from tables
+                        stateStruct.earth_magfield = table_earth_field_ga;
+                    }
                 }
             }
 

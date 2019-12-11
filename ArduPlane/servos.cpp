@@ -327,7 +327,19 @@ void Plane::set_servos_manual_passthrough(void)
     SRV_Channels::set_output_scaled(SRV_Channel::k_aileron, channel_roll->get_control_in_zero_dz());
     SRV_Channels::set_output_scaled(SRV_Channel::k_elevator, channel_pitch->get_control_in_zero_dz());
     SRV_Channels::set_output_scaled(SRV_Channel::k_rudder, channel_rudder->get_control_in_zero_dz());
-    SRV_Channels::set_output_scaled(SRV_Channel::k_throttle, get_throttle_input(true));
+    int8_t throttle = get_throttle_input(true);
+    SRV_Channels::set_output_scaled(SRV_Channel::k_throttle, throttle);
+
+    if (quadplane.available() && (quadplane.options & QuadPlane::OPTION_IDLE_GOV_MANUAL)) {
+        // for quadplanes it can be useful to run the idle governor in MANUAL mode
+        // as it prevents the VTOL motors from running
+        int8_t min_throttle = aparm.throttle_min.get();
+
+        // apply idle governor
+        g2.ice_control.update_idle_governor(min_throttle);
+        throttle = MAX(throttle, min_throttle);
+        SRV_Channels::set_output_scaled(SRV_Channel::k_throttle, throttle);
+    }
 }
 
 /*
@@ -378,8 +390,6 @@ void Plane::throttle_watt_limiter(int8_t &min_throttle, int8_t &max_throttle)
     }
 }
     
-
-
 /*
   setup output channels all non-manual modes
  */
@@ -393,6 +403,9 @@ void Plane::set_servos_controlled(void)
     // convert 0 to 100% (or -100 to +100) into PWM
     int8_t min_throttle = aparm.throttle_min.get();
     int8_t max_throttle = aparm.throttle_max.get();
+
+    // apply idle governor
+    g2.ice_control.update_idle_governor(min_throttle);
     
     if (min_throttle < 0 && !allow_reverse_thrust()) {
         // reverse thrust is available but inhibited.
@@ -417,9 +430,9 @@ void Plane::set_servos_controlled(void)
     
     if (!hal.util->get_soft_armed()) {
         if (arming.arming_required() == AP_Arming::Required::YES_ZERO_PWM) {
-            SRV_Channels::set_output_limit(SRV_Channel::k_throttle, SRV_Channel::SRV_CHANNEL_LIMIT_ZERO_PWM);
-            SRV_Channels::set_output_limit(SRV_Channel::k_throttleLeft, SRV_Channel::SRV_CHANNEL_LIMIT_ZERO_PWM);
-            SRV_Channels::set_output_limit(SRV_Channel::k_throttleRight, SRV_Channel::SRV_CHANNEL_LIMIT_ZERO_PWM);
+            SRV_Channels::set_output_limit(SRV_Channel::k_throttle, SRV_Channel::Limit::ZERO_PWM);
+            SRV_Channels::set_output_limit(SRV_Channel::k_throttleLeft, SRV_Channel::Limit::ZERO_PWM);
+            SRV_Channels::set_output_limit(SRV_Channel::k_throttleRight, SRV_Channel::Limit::ZERO_PWM);
         } else {
             SRV_Channels::set_output_scaled(SRV_Channel::k_throttle, 0);
             SRV_Channels::set_output_scaled(SRV_Channel::k_throttleLeft, 0);
@@ -633,8 +646,8 @@ void Plane::servos_twin_engine_mix(void)
     }
     if (!hal.util->get_soft_armed()) {
         if (arming.arming_required() == AP_Arming::Required::YES_ZERO_PWM) {
-            SRV_Channels::set_output_limit(SRV_Channel::k_throttleLeft, SRV_Channel::SRV_CHANNEL_LIMIT_ZERO_PWM);
-            SRV_Channels::set_output_limit(SRV_Channel::k_throttleRight, SRV_Channel::SRV_CHANNEL_LIMIT_ZERO_PWM);
+            SRV_Channels::set_output_limit(SRV_Channel::k_throttleLeft, SRV_Channel::Limit::ZERO_PWM);
+            SRV_Channels::set_output_limit(SRV_Channel::k_throttleRight, SRV_Channel::Limit::ZERO_PWM);
         } else {
             SRV_Channels::set_output_scaled(SRV_Channel::k_throttleLeft, 0);
             SRV_Channels::set_output_scaled(SRV_Channel::k_throttleRight, 0);
@@ -786,9 +799,9 @@ void Plane::set_servos(void)
             SRV_Channels::set_output_scaled(SRV_Channel::k_elevator, 0);
             SRV_Channels::set_output_scaled(SRV_Channel::k_rudder, 0);
         } else if (landing.get_then_servos_neutral() == 2) {
-            SRV_Channels::set_output_limit(SRV_Channel::k_aileron, SRV_Channel::SRV_CHANNEL_LIMIT_ZERO_PWM);
-            SRV_Channels::set_output_limit(SRV_Channel::k_elevator, SRV_Channel::SRV_CHANNEL_LIMIT_ZERO_PWM);
-            SRV_Channels::set_output_limit(SRV_Channel::k_rudder, SRV_Channel::SRV_CHANNEL_LIMIT_ZERO_PWM);
+            SRV_Channels::set_output_limit(SRV_Channel::k_aileron, SRV_Channel::Limit::ZERO_PWM);
+            SRV_Channels::set_output_limit(SRV_Channel::k_elevator, SRV_Channel::Limit::ZERO_PWM);
+            SRV_Channels::set_output_limit(SRV_Channel::k_rudder, SRV_Channel::Limit::ZERO_PWM);
         }
     }
 

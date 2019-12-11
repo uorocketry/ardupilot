@@ -125,11 +125,6 @@ enum SmartRTLState {
     SmartRTL_Land
 };
 
-enum LandStateType {
-    LandStateType_FlyToLocation = 0,
-    LandStateType_Descending = 1
-};
-
 enum PayloadPlaceStateType {
     PayloadPlaceStateType_FlyToLocation,
     PayloadPlaceStateType_Calibrating_Hover_Start,
@@ -165,14 +160,6 @@ enum LoggingParameters {
      LOG_GUIDEDTARGET_MSG,
      LOG_SYSIDD_MSG,
      LOG_SYSIDS_MSG,
-};
-
-// Harmonic notch update mode
-enum HarmonicNotchDynamicMode {
-    HarmonicNotch_Fixed,
-    HarmonicNotch_UpdateThrottle,
-    HarmonicNotch_UpdateRPM,
-    HarmonicNotch_UpdateBLHeli,
 };
 
 #define MASK_LOG_ATTITUDE_FAST          (1<<0)

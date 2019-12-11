@@ -585,9 +585,8 @@ const AP_Param::GroupInfo NavEKF2::var_info[] = {
     AP_GROUPEND
 };
 
-NavEKF2::NavEKF2(const AP_AHRS *ahrs, const RangeFinder &rng) :
-    _ahrs(ahrs),
-    _rng(rng)
+NavEKF2::NavEKF2(const AP_AHRS *ahrs) :
+    _ahrs(ahrs)
 {
     AP_Param::setup_object_defaults(this, var_info);
 }
@@ -621,6 +620,11 @@ void NavEKF2::check_log_write(void)
 // Initialise the filter
 bool NavEKF2::InitialiseFilter(void)
 {
+    // Return immediately if there is insufficient memory
+    if (core_malloc_failed) {
+        return false;
+    }
+
     initFailure = InitFailures::UNKNOWN;
     if (_enable == 0) {
         if (_ahrs->get_ekf_type() == 2) {
@@ -666,16 +670,16 @@ bool NavEKF2::InitialiseFilter(void)
         // check if there is enough memory to create the EKF cores
         if (hal.util->available_memory() < sizeof(NavEKF2_core)*num_cores + 4096) {
             initFailure = InitFailures::NO_MEM;
+            core_malloc_failed = true;
             gcs().send_text(MAV_SEVERITY_CRITICAL, "NavEKF2: not enough memory available");
-            _enable.set(0);
             return false;
         }
 
         // try to allocate from CCM RAM, fallback to Normal RAM if not available or full
         core = (NavEKF2_core*)hal.util->malloc_type(sizeof(NavEKF2_core)*num_cores, AP_HAL::Util::MEM_FAST);
         if (core == nullptr) {
-            _enable.set(0);
             initFailure = InitFailures::NO_MEM;
+            core_malloc_failed = true;
             gcs().send_text(MAV_SEVERITY_CRITICAL, "NavEKF2: memory allocation failed");
             return false;
         }
@@ -1363,7 +1367,7 @@ void  NavEKF2::getFilterGpsStatus(int8_t instance, nav_gps_status &status) const
 }
 
 // send an EKF_STATUS_REPORT message to GCS
-void NavEKF2::send_status_report(mavlink_channel_t chan)
+void NavEKF2::send_status_report(mavlink_channel_t chan) const
 {
     if (core) {
         core[primary].send_status_report(chan);

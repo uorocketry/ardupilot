@@ -505,7 +505,7 @@ public:
     static const struct AP_Param::GroupInfo var_info[];
 
     // button reporting library
-    AP_Button button;
+    AP_Button *button_ptr;
 
 #if STATS_ENABLED == ENABLED
     // vehicle statistics
@@ -564,6 +564,11 @@ public:
     AP_Int8 crow_flap_weight_inner;
     AP_Int8 crow_flap_options;
     AP_Int8 crow_flap_aileron_matching;
+
+#if EFI_ENABLED
+    // EFI Engine Monitor
+    AP_EFI efi;
+#endif  
 };
 
 extern const AP_Param::Info var_info[];
