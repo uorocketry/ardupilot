@@ -607,6 +607,10 @@ MAV_MISSION_RESULT AP_Mission::mavlink_int_to_mission_cmd(const mavlink_mission_
         // this is reserved for storing 16 bit command IDs
         return MAV_MISSION_INVALID;
         
+    case MAV_CMD_WAIT_FOR_DROP:
+        cmd.p1 = packet.param1;
+        break;
+
     case MAV_CMD_NAV_WAYPOINT:                          // MAV ID: 16
     {
         copy_location = true;
@@ -1068,6 +1072,10 @@ bool AP_Mission::mission_cmd_to_mavlink_int(const AP_Mission::Mission_Command& c
         // this is reserved for 16 bit command IDs
         return false;
         
+    case MAV_CMD_WAIT_FOR_DROP:
+        packet.param1 = cmd.p1;
+        break;
+
     case MAV_CMD_NAV_WAYPOINT:                          // MAV ID: 16
         copy_location = true;
 #if APM_BUILD_TYPE(APM_BUILD_ArduPlane)
@@ -1755,6 +1763,8 @@ bool AP_Mission::jump_to_landing_sequence(void)
 
 const char *AP_Mission::Mission_Command::type() const {
     switch(id) {
+    case MAV_CMD_WAIT_FOR_DROP:
+        return "WAIT_FOR_DROP";
     case MAV_CMD_NAV_WAYPOINT:
         return "WP";
     case MAV_CMD_NAV_RETURN_TO_LAUNCH:

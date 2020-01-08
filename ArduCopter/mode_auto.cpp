@@ -380,6 +380,10 @@ bool Copter::ModeAuto::start_command(const AP_Mission::Mission_Command& cmd)
     ///
     /// navigation commands
     ///
+    case MAV_CMD_WAIT_FOR_DROP:
+        do_drop();
+        break;
+
     case MAV_CMD_NAV_TAKEOFF:                   // 22
         do_takeoff(cmd);
         break;
@@ -649,6 +653,9 @@ bool Copter::ModeAuto::verify_command(const AP_Mission::Mission_Command& cmd)
     //
     // navigation commands
     //
+    case MAV_CMD_WAIT_FOR_DROP:
+        return verify_drop(cmd);
+
     case MAV_CMD_NAV_TAKEOFF:
         return verify_takeoff();
 
@@ -1908,6 +1915,26 @@ bool Copter::ModeAuto::verify_nav_delay(const AP_Mission::Mission_Command& cmd)
         nav_delay_time_max = 0;
         return true;
     }
+    return false;
+}
+
+void Copter::ModeAuto::do_drop()
+{
+    max_alt = copter.barometer.get_altitude();
+}
+
+bool Copter::ModeAuto::verify_drop(const AP_Mission::Mission_Command& cmd)
+{
+    float current_alt = copter.barometer.get_altitude();
+
+    max_alt = current_alt > max_alt ? current_alt : max_alt; //if current altitude is greater, update max altitude
+
+    if (current_alt <= (max_alt-cmd.p1)){ //check if we have dropped the preset amount
+        copter.init_arm_motors(false, false); //if so, arm the motors (no checks performed)
+        copter.ap.land_complete = 0;
+        return true;
+    }
+
     return false;
 }
 
