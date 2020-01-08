@@ -832,7 +832,7 @@ private:
     // motors.cpp
     void arm_motors_check();
     void auto_disarm_check();
-    bool init_arm_motors(bool arming_from_gcs, bool do_arming_checks=true);
+    bool init_arm_motors(bool arming_from_gcs, bool do_arming_checks=true, bool do_reset_height=true);
     void init_disarm_motors();
     void motors_output();
     void lost_vehicle_check();

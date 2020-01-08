@@ -133,7 +133,7 @@ void Copter::auto_disarm_check()
 
 // init_arm_motors - performs arming process including initialisation of barometer and gyros
 //  returns false if arming failed because of pre-arm checks, arming checks or a gyro calibration failure
-bool Copter::init_arm_motors(const bool arming_from_gcs, const bool do_arming_checks)
+bool Copter::init_arm_motors(const bool arming_from_gcs, const bool do_arming_checks, const bool do_reset_height)
 {
     static bool in_arm_motors = false;
 
@@ -186,7 +186,7 @@ bool Copter::init_arm_motors(const bool arming_from_gcs, const bool do_arming_ch
 
         // we have reset height, so arming height is zero
         arming_altitude_m = 0;        
-    } else if (!ahrs.home_is_locked()) {
+    } else if (!ahrs.home_is_locked() && do_reset_height) {
         // Reset home position if it has already been set before (but not locked)
         set_home_to_current_location(false);
 
