@@ -1923,13 +1923,17 @@ bool Copter::ModeAuto::verify_nav_delay(const AP_Mission::Mission_Command& cmd)
 void Copter::ModeAuto::do_drop()
 {
     max_alt = copter.barometer.get_altitude();
+    gcs().send_text(MAV_SEVERITY_INFO, "MAX ALT : %5.3f", (double)max_alt);
 }
 
 bool Copter::ModeAuto::verify_drop(const AP_Mission::Mission_Command& cmd)
 {
     float current_alt = copter.barometer.get_altitude();
 
-    max_alt = current_alt > max_alt ? current_alt : max_alt; //if current altitude is greater, update max altitude
+    if(current_alt > max_alt){
+        max_alt = current_alt;
+        gcs().send_text(MAV_SEVERITY_INFO, "MAX ALT : %5.3f", (double)max_alt);
+    }
 
     if (current_alt <= (max_alt-cmd.p1)){ //check if we have dropped the preset amount
         copter.init_arm_motors(false, false); //if so, arm the motors (no checks performed)
