@@ -1938,6 +1938,7 @@ bool Copter::ModeAuto::verify_drop(const AP_Mission::Mission_Command& cmd)
     if (current_alt <= (max_alt-cmd.p1)){ //check if we have dropped the preset amount
         copter.init_arm_motors(false, false); //if so, arm the motors (no checks performed)
         copter.ap.land_complete = 0;
+        copter.ap.auto_armed = 1;
         return true;
     }
 
